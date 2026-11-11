@@ -13,6 +13,7 @@ use Kanboard\Model\ProjectPermissionModel;
 use Kanboard\Model\TaskModel;
 use Kanboard\Model\ProjectUserRoleModel;
 use Kanboard\Model\ProjectGroupRoleModel;
+use Kanboard\Model\CommentModel;
 use Kanboard\Model\UserNotificationModel;
 use Kanboard\Model\UserNotificationFilterModel;
 use Kanboard\Core\Security\Role;
@@ -232,5 +233,60 @@ class UserNotificationTest extends Base
 
         $userNotificationModel->sendNotifications(TaskModel::EVENT_CREATE, array('task' => $taskFinderModel->getDetails(1)));
         $this->assertEquals(2, $notifier->calls);
+    }
+
+    public function testSendNotificationsSkipsRestrictedCommentsForProjectMembers()
+    {
+        $userModel = new UserModel($this->container);
+        $userNotificationModel = new UserNotificationModel($this->container);
+        $projectModel = new ProjectModel($this->container);
+        $taskCreationModel = new TaskCreationModel($this->container);
+        $taskFinderModel = new TaskFinderModel($this->container);
+        $projectUserRoleModel = new ProjectUserRoleModel($this->container);
+
+        $this->assertEquals(1, $projectModel->create(array('name' => 'UnitTest1')));
+        $this->assertEquals(2, $userModel->create(array('username' => 'member')));
+        $this->assertEquals(1, $taskCreationModel->create(array('title' => 'test', 'project_id' => 1)));
+        $this->assertTrue($userModel->update(array('id' => 2, 'email' => 'member@localhost')));
+        $this->assertTrue($projectUserRoleModel->addUser(1, 2, Role::PROJECT_MEMBER));
+
+        $userNotificationModel->saveSettings(2, array(
+            'notifications_enabled' => 1,
+            'notifications_filter' => UserNotificationFilterModel::FILTER_NONE,
+            'notification_types' => array('web' => 1),
+        ));
+
+        $notifier = new class {
+            public $calls = 0;
+
+            public function notifyUser()
+            {
+                $this->calls++;
+            }
+        };
+
+        $this->container['userNotificationTypeModel']
+            ->expects($this->any())
+            ->method('getSelectedTypes')
+            ->willReturn(array('web'));
+
+        $this->container['userNotificationTypeModel']
+            ->expects($this->any())
+            ->method('getType')
+            ->willReturn($notifier);
+
+        $event = array('task' => $taskFinderModel->getDetails(1));
+
+        $event['comment'] = array('comment' => 'restricted', 'visibility' => Role::APP_ADMIN);
+        $userNotificationModel->sendNotifications(CommentModel::EVENT_CREATE, $event);
+        $this->assertEquals(0, $notifier->calls);
+
+        $event['comment'] = array('comment' => 'restricted', 'visibility' => Role::APP_MANAGER);
+        $userNotificationModel->sendNotifications(CommentModel::EVENT_CREATE, $event);
+        $this->assertEquals(0, $notifier->calls);
+
+        $event['comment'] = array('comment' => 'public', 'visibility' => Role::APP_USER);
+        $userNotificationModel->sendNotifications(CommentModel::EVENT_CREATE, $event);
+        $this->assertEquals(1, $notifier->calls);
     }
 }

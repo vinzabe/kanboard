@@ -3,6 +3,7 @@
 namespace Kanboard\Model;
 
 use Kanboard\Core\Base;
+use Kanboard\Core\Security\Role;
 use Kanboard\Core\Translator;
 
 /**
@@ -25,10 +26,53 @@ class UserNotificationModel extends Base
         $users = $this->getUsersWithNotificationEnabled($event_data['task']['project_id'], $this->userSession->getId());
 
         foreach ($users as $user) {
+            if (! $this->isEventVisibleForUser($user, $event_name, $event_data)) {
+                continue;
+            }
+
             if ($this->userNotificationFilterModel->shouldReceiveNotification($user, $event_data)) {
                 $this->sendUserNotification($user, $event_name, $event_data);
             }
         }
+    }
+
+    /**
+     * Check that a notification recipient is allowed to see the event payload
+     *
+     * Notification recipients are picked from the project members without any
+     * role filter, so events carrying restricted content must only be sent to
+     * users whose application or project role grants access to that content.
+     *
+     * @access protected
+     * @param  array  $user
+     * @param  string $event_name
+     * @param  array  $event_data
+     * @return boolean
+     */
+    protected function isEventVisibleForUser(array $user, $event_name, array $event_data)
+    {
+        if (! isset($event_data['comment']['visibility'])) {
+            return true;
+        }
+
+        $visibility = $event_data['comment']['visibility'];
+
+        if ($visibility === Role::APP_USER) {
+            return true;
+        }
+
+        $role = $this->userModel->getById($user['id'])['role'];
+
+        if ($role === Role::APP_ADMIN) {
+            return true;
+        }
+
+        if ($role === Role::APP_MANAGER) {
+            return $visibility !== Role::APP_ADMIN;
+        }
+
+        // Project roles are never allowed to receive application-restricted content
+        return false;
     }
 
     /**
