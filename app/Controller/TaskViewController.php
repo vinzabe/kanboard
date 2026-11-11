@@ -44,7 +44,7 @@ class TaskViewController extends BaseController
                 return $comment['visibility'] === Role::APP_USER;
             }),
             'subtasks' => $this->subtaskModel->getAll($task['id']),
-            'links' => $this->taskLinkModel->getAllGroupedByLabel($task['id']),
+            'links' => $this->filterPublicLinks($this->taskLinkModel->getAllGroupedByLabel($task['id'])),
             'task' => $task,
             'columns_list' => $this->columnModel->getList($task['project_id']),
             'colors_list' => $this->colorModel->getList(),
@@ -54,6 +54,35 @@ class TaskViewController extends BaseController
             'auto_refresh' => true,
             'not_editable' => true,
         )));
+    }
+
+    /**
+     * Remove internal links pointing to tasks the public visitor cannot access
+     *
+     * @access protected
+     * @param  array  $links  Links grouped by label
+     * @return array
+     */
+    protected function filterPublicLinks(array $links)
+    {
+        $allowedProjectIds = array();
+
+        foreach ($links as $label => $labelLinks) {
+            foreach ($labelLinks as $key => $link) {
+                $projectId = (int) $link['project_id'];
+
+                if (! isset($allowedProjectIds[$projectId])) {
+                    $project = $this->projectModel->getById($projectId);
+                    $allowedProjectIds[$projectId] = ! empty($project) && $project['is_public'] == 1;
+                }
+
+                if (! $allowedProjectIds[$projectId]) {
+                    unset($links[$label][$key]);
+                }
+            }
+        }
+
+        return $links;
     }
 
     /**
